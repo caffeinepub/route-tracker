@@ -70,6 +70,7 @@ export async function downloadArea(
   minZoom: number,
   maxZoom: number,
   onProgress: (done: number, total: number) => void,
+  _name?: string,
 ): Promise<number> {
   const urls: string[] = [];
   for (let z = minZoom; z <= maxZoom; z++) {
@@ -122,4 +123,37 @@ export async function clearTileCache(): Promise<void> {
   } catch {
     // no-op
   }
+}
+
+// --- Named download records ---
+
+export interface MapDownloadRecord {
+  id: string;
+  name: string;
+  date: number;
+  tileCount: number;
+  bounds: { north: number; south: number; east: number; west: number };
+  minZoom: number;
+  maxZoom: number;
+}
+
+const DOWNLOADS_KEY = "map-downloads-v1";
+
+export function getMapDownloadRecords(): MapDownloadRecord[] {
+  try {
+    return JSON.parse(localStorage.getItem(DOWNLOADS_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+export function saveMapDownloadRecord(record: MapDownloadRecord): void {
+  const records = getMapDownloadRecords();
+  records.unshift(record);
+  localStorage.setItem(DOWNLOADS_KEY, JSON.stringify(records));
+}
+
+export function deleteMapDownloadRecord(id: string): void {
+  const records = getMapDownloadRecords().filter((r) => r.id !== id);
+  localStorage.setItem(DOWNLOADS_KEY, JSON.stringify(records));
 }

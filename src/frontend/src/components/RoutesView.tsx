@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeleteRoute, useGetRoutes, useSaveRoute } from "@/hooks/useQueries";
-import { exportGPX, exportKML } from "@/utils/exportRoute";
+import { exportGPX, exportKML, exportKMZ } from "@/utils/exportRoute";
 import { formatDistance } from "@/utils/haversine";
 import { deletePendingRoute, getPendingRoutes } from "@/utils/offlineRoutes";
 import type { PendingRoute } from "@/utils/offlineRoutes";
@@ -31,6 +31,7 @@ import {
   Map as MapIcon,
   MapPin,
   Navigation2,
+  Package,
   Route,
   Trash2,
   WifiOff,
@@ -435,6 +436,17 @@ export default function RoutesView({
                             >
                               <FileText className="w-4 h-4" />
                               Export KML
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              data-ocid={`routes.export_kmz_button.${index + 1}`}
+                              className="gap-2 cursor-pointer"
+                              onClick={() => {
+                                exportKMZ(route.name, route.waypoints);
+                                toast.success("Route exported as KMZ");
+                              }}
+                            >
+                              <Package className="w-4 h-4" />
+                              Export KMZ
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>

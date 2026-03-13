@@ -1,16 +1,17 @@
+import DownloadedMapsView from "@/components/DownloadedMapsView";
 import MapView from "@/components/MapView";
 import RoutesView from "@/components/RoutesView";
 import { Toaster } from "@/components/ui/sonner";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Download, List, MapIcon, X } from "lucide-react";
+import { Download, HardDrive, List, MapIcon, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState } from "react";
 import type { Coordinate } from "./backend.d";
 
 const queryClient = new QueryClient();
 
-type Tab = "map" | "routes";
+type Tab = "map" | "routes" | "downloads";
 
 interface ViewRoute {
   name: string;
@@ -110,7 +111,7 @@ function AppContent() {
                 isOnline={isOnline}
               />
             </motion.div>
-          ) : (
+          ) : activeTab === "routes" ? (
             <motion.div
               key="routes"
               initial={{ opacity: 0, x: 20 }}
@@ -125,6 +126,17 @@ function AppContent() {
                 onSetReferenceRoute={setReferenceRoute}
                 isOnline={isOnline}
               />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="downloads"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.2 }}
+              className="absolute inset-0"
+            >
+              <DownloadedMapsView />
             </motion.div>
           )}
         </AnimatePresence>
@@ -181,7 +193,7 @@ function AppContent() {
             type="button"
             data-ocid="nav.map_tab"
             onClick={() => setActiveTab("map")}
-            className={`flex-1 flex flex-col items-center gap-1 py-3 px-4 transition-all duration-200 ${
+            className={`flex-1 flex flex-col items-center gap-1 py-3 px-2 transition-all duration-200 ${
               activeTab === "map"
                 ? "text-primary"
                 : "text-muted-foreground hover:text-foreground"
@@ -206,7 +218,7 @@ function AppContent() {
             type="button"
             data-ocid="nav.routes_tab"
             onClick={() => setActiveTab("routes")}
-            className={`flex-1 flex flex-col items-center gap-1 py-3 px-4 transition-all duration-200 ${
+            className={`flex-1 flex flex-col items-center gap-1 py-3 px-2 transition-all duration-200 ${
               activeTab === "routes"
                 ? "text-primary"
                 : "text-muted-foreground hover:text-foreground"
@@ -226,6 +238,31 @@ function AppContent() {
               )}
             </div>
             <span className="text-xs font-semibold">Routes</span>
+          </button>
+          <button
+            type="button"
+            data-ocid="nav.downloads_tab"
+            onClick={() => setActiveTab("downloads")}
+            className={`flex-1 flex flex-col items-center gap-1 py-3 px-2 transition-all duration-200 ${
+              activeTab === "downloads"
+                ? "text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <div
+              className={`relative p-1.5 rounded-xl transition-all duration-200 ${
+                activeTab === "downloads" ? "bg-primary/15" : ""
+              }`}
+            >
+              <HardDrive className="w-5 h-5" />
+              {activeTab === "downloads" && (
+                <motion.div
+                  layoutId="tab-indicator"
+                  className="absolute inset-0 bg-primary/15 rounded-xl"
+                />
+              )}
+            </div>
+            <span className="text-xs font-semibold">Downloaded</span>
           </button>
         </div>
       </nav>

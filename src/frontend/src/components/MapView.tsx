@@ -35,11 +35,15 @@ import { savePendingRoute } from "@/utils/offlineRoutes";
 import {
   cacheTile,
   clearTileCache,
+  deleteMapDownloadRecord,
   downloadArea,
   estimateTileCount,
   getCacheStats,
+  getMapDownloadRecords,
   getTileFromCache,
+  saveMapDownloadRecord,
 } from "@/utils/tileCache";
+import type { MapDownloadRecord } from "@/utils/tileCache";
 import {
   AlertCircle,
   AlertTriangle,
@@ -82,6 +86,14 @@ interface MapViewProps {
 const GRAY_TILE =
   "data:image/gif;base64,R0lGODlhAQABAIAAAMLCwgAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==";
 
+function formatRecordDate(ts: number): string {
+  return new Date(ts).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 export default function MapView({
   viewRoute,
   onViewRouteClear,
@@ -123,6 +135,7 @@ export default function MapView({
   const [isClearingCache, setIsClearingCache] = useState(false);
 
   // Download area state
+  const [downloadName, setDownloadName] = useState("");
   const [maxDownloadZoom, setMaxDownloadZoom] = useState(16);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState({
@@ -135,8 +148,35 @@ export default function MapView({
     east: number;
     west: number;
   } | null>(null);
+  const [downloadRecords, setDownloadRecords] = useState<MapDownloadRecord[]>(
+    [],
+  );
 
   const { mutateAsync: saveRoute, isPending: isSaving } = useSaveRoute();
+
+  // Fix: clear pointer-events/scroll-lock after sheets close (Radix Sheet leaves body locked on mobile)
+  useEffect(() => {
+    if (!settingsOpen && !downloadSheetOpen) {
+      const timer = setTimeout(() => {
+        document.body.style.removeProperty("pointer-events");
+        document.body.style.removeProperty("overflow");
+        document.body.removeAttribute("data-scroll-locked");
+        // Re-enable pointer events on the map container explicitly
+        if (mapRef.current) {
+          mapRef.current.style.removeProperty("pointer-events");
+          (mapRef.current as HTMLElement).style.pointerEvents = "auto";
+        }
+        // Re-enable Leaflet map interactions
+        if (mapInstance.current) {
+          mapInstance.current.dragging.enable();
+          mapInstance.current.touchZoom.enable();
+          mapInstance.current.scrollWheelZoom.enable();
+          mapInstance.current.doubleClickZoom.enable();
+        }
+      }, 350);
+      return () => clearTimeout(timer);
+    }
+  }, [settingsOpen, downloadSheetOpen]);
 
   // Initialize map with offline-capable tile layer
   useEffect(() => {
@@ -179,7 +219,7 @@ export default function MapView({
       },
     });
 
-    new OfflineTileLayer("", {
+    new (OfflineTileLayer as any)("", {
       attribution:
         '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       maxZoom: 19,
@@ -566,11 +606,12 @@ export default function MapView({
         west: b.getWest(),
       });
     }
+    setDownloadRecords(getMapDownloadRecords());
     setDownloadSheetOpen(true);
   }, []);
 
   const handleDownload = useCallback(async () => {
-    if (!mapBounds) return;
+    if (!mapBounds || !downloadName.trim()) return;
     setIsDownloading(true);
     setDownloadProgress({ done: 0, total: 0 });
     try {
@@ -582,13 +623,28 @@ export default function MapView({
           setDownloadProgress({ done, total: tot });
         },
       );
+      saveMapDownloadRecord({
+        id: Date.now().toString(),
+        name: downloadName.trim() || "Unnamed Map",
+        date: Date.now(),
+        tileCount: total,
+        bounds: mapBounds,
+        minZoom: 12,
+        maxZoom: maxDownloadZoom,
+      });
+      setDownloadRecords(getMapDownloadRecords());
+      setDownloadName("");
       toast.success(`Downloaded ${total} map tiles for offline use`);
-      setDownloadSheetOpen(false);
     } catch {
       toast.error("Download failed");
     }
     setIsDownloading(false);
-  }, [mapBounds, maxDownloadZoom]);
+  }, [mapBounds, maxDownloadZoom, downloadName]);
+
+  const handleDeleteRecord = useCallback((id: string) => {
+    deleteMapDownloadRecord(id);
+    setDownloadRecords(getMapDownloadRecords());
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -992,7 +1048,7 @@ export default function MapView({
           {!isOnline && (
             <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-600 dark:text-amber-400">
               <WifiOff className="w-3.5 h-3.5 flex-shrink-0" />
-              Route will sync to the cloud when you're back online.
+              Route will sync to the cloud when you&apos;re back online.
             </div>
           )}
           <div className="space-y-3">
@@ -1039,7 +1095,7 @@ export default function MapView({
         <SheetContent
           data-ocid="download_area.sheet"
           side="bottom"
-          className="rounded-t-2xl bg-card border-border px-6 pb-8"
+          className="rounded-t-2xl bg-card border-border px-6 pb-8 max-h-[85vh] overflow-y-auto"
         >
           <SheetHeader className="mb-6">
             <SheetTitle className="font-display text-lg flex items-center gap-2">
@@ -1049,6 +1105,21 @@ export default function MapView({
           </SheetHeader>
 
           <div className="space-y-5">
+            {/* Name input */}
+            <div className="space-y-2">
+              <Label htmlFor="download-name" className="text-sm font-semibold">
+                Map Name
+              </Label>
+              <Input
+                data-ocid="download_area.input"
+                id="download-name"
+                placeholder="e.g. City Centre"
+                value={downloadName}
+                onChange={(e) => setDownloadName(e.target.value)}
+                className="rounded-xl"
+              />
+            </div>
+
             {/* Current bounds */}
             {mapBounds && (
               <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1145,7 +1216,7 @@ export default function MapView({
             <Button
               data-ocid="download_area.submit_button"
               onClick={handleDownload}
-              disabled={isDownloading || !isOnline}
+              disabled={isDownloading || !isOnline || !downloadName.trim()}
               className="w-full bg-primary text-primary-foreground rounded-xl h-12 font-display font-semibold gap-2"
             >
               {isDownloading ? (
@@ -1158,6 +1229,11 @@ export default function MapView({
                   <WifiOff className="w-4 h-4" />
                   Offline — Connect to Download
                 </>
+              ) : !downloadName.trim() ? (
+                <>
+                  <Download className="w-4 h-4" />
+                  Enter a name to download
+                </>
               ) : (
                 <>
                   <Download className="w-4 h-4" />
@@ -1165,6 +1241,55 @@ export default function MapView({
                 </>
               )}
             </Button>
+
+            {/* Downloaded Maps list */}
+            <div className="border-t border-border/40 pt-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <HardDrive className="w-4 h-4 text-primary" />
+                <p className="font-semibold text-foreground text-sm">
+                  Downloaded Maps
+                </p>
+              </div>
+
+              {downloadRecords.length === 0 ? (
+                <p
+                  data-ocid="download_area.empty_state"
+                  className="text-xs text-muted-foreground text-center py-3"
+                >
+                  No maps downloaded yet
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {downloadRecords.map((record, idx) => (
+                    <div
+                      key={record.id}
+                      data-ocid={`download_area.item.${idx + 1}`}
+                      className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3 gap-3"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-sm text-foreground truncate">
+                          {record.name}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {formatRecordDate(record.date)} &middot;{" "}
+                          {record.tileCount.toLocaleString()} tiles (~
+                          {((record.tileCount * 15) / 1024).toFixed(1)} MB)
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        data-ocid={`download_area.delete_button.${idx + 1}`}
+                        onClick={() => handleDeleteRecord(record.id)}
+                        className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                        title="Delete this download record"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </SheetContent>
       </Sheet>
@@ -1174,7 +1299,7 @@ export default function MapView({
         <SheetContent
           data-ocid="settings.sheet"
           side="bottom"
-          className="rounded-t-2xl bg-card border-border px-6 pb-8"
+          className="rounded-t-2xl bg-card border-border px-6 pb-8 max-h-[85vh] overflow-y-auto"
         >
           <SheetHeader className="mb-6">
             <SheetTitle className="font-display text-lg flex items-center gap-2">
