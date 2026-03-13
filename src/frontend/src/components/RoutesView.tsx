@@ -17,22 +17,26 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useDeleteRoute, useGetRoutes } from "@/hooks/useQueries";
+import { useDeleteRoute, useGetRoutes, useSaveRoute } from "@/hooks/useQueries";
 import { exportGPX, exportKML } from "@/utils/exportRoute";
 import { formatDistance } from "@/utils/haversine";
+import { deletePendingRoute, getPendingRoutes } from "@/utils/offlineRoutes";
+import type { PendingRoute } from "@/utils/offlineRoutes";
 import {
   Clock,
   Compass,
   Download,
   FileText,
+  Loader2,
   Map as MapIcon,
   MapPin,
   Navigation2,
   Route,
   Trash2,
+  WifiOff,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { Coordinate } from "../backend.d";
 
@@ -42,6 +46,7 @@ interface RoutesViewProps {
   onSetReferenceRoute: (
     route: { name: string; waypoints: Coordinate[] } | null,
   ) => void;
+  isOnline: boolean;
 }
 
 function formatTimestamp(ts: bigint): string {
@@ -60,10 +65,68 @@ export default function RoutesView({
   onViewRoute,
   referenceRoute,
   onSetReferenceRoute,
+  isOnline,
 }: RoutesViewProps) {
   const { data: routes, isLoading, isError } = useGetRoutes();
   const { mutateAsync: deleteRoute, isPending: isDeleting } = useDeleteRoute();
+  const { mutateAsync: saveRoute } = useSaveRoute();
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
+  const [pendingRoutes, setPendingRoutes] = useState<PendingRoute[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState({ done: 0, total: 0 });
+  const prevOnlineRef = useRef<boolean>(isOnline);
+
+  const loadPendingRoutes = useCallback(async () => {
+    try {
+      const fetched = await getPendingRoutes();
+      setPendingRoutes(fetched);
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPendingRoutes();
+  }, [loadPendingRoutes]);
+
+  // Auto-sync when coming back online
+  const pendingCount = pendingRoutes.length;
+  useEffect(() => {
+    if (isOnline && !prevOnlineRef.current && pendingCount > 0) {
+      handleSync();
+    }
+    prevOnlineRef.current = isOnline;
+  }, [isOnline, pendingCount]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSync = async () => {
+    if (isSyncing || pendingRoutes.length === 0) return;
+    setIsSyncing(true);
+    const total = pendingRoutes.length;
+    setSyncProgress({ done: 0, total });
+    let done = 0;
+    for (const route of pendingRoutes) {
+      try {
+        await saveRoute({
+          name: route.name,
+          waypoints: route.waypoints,
+          distance: route.distance,
+          timestamp: route.timestamp,
+        });
+        if (route.id !== undefined) {
+          await deletePendingRoute(route.id);
+        }
+        done++;
+        setSyncProgress({ done, total });
+      } catch {
+        toast.error(`Failed to sync "${route.name}"`);
+      }
+    }
+    await loadPendingRoutes();
+    setIsSyncing(false);
+    if (done > 0) {
+      toast.success(`Synced ${done} route${done !== 1 ? "s" : ""}`);
+    }
+  };
 
   const handleDelete = async () => {
     if (deleteIndex === null) return;
@@ -116,6 +179,97 @@ export default function RoutesView({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        {/* Pending Sync Section */}
+        <AnimatePresence>
+          {pendingRoutes.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="space-y-2"
+            >
+              <div className="flex items-center justify-between px-1">
+                <div className="flex items-center gap-2">
+                  <WifiOff className="w-4 h-4 text-amber-500" />
+                  <span className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+                    Pending Sync ({pendingRoutes.length})
+                  </span>
+                </div>
+                <Button
+                  data-ocid="routes.sync_button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!isOnline || isSyncing}
+                  onClick={handleSync}
+                  className="h-7 px-3 text-xs rounded-lg border-amber-500/40 text-amber-600 hover:bg-amber-500/10 disabled:opacity-50"
+                >
+                  {isSyncing ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                      {syncProgress.done}/{syncProgress.total}
+                    </>
+                  ) : (
+                    "Sync Now"
+                  )}
+                </Button>
+              </div>
+
+              {pendingRoutes.map((route, index) => (
+                <motion.div
+                  key={route.id ?? index}
+                  data-ocid={`routes.pending_item.${index + 1}`}
+                  initial={{ opacity: 0, scale: 0.97 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.97 }}
+                  transition={{ delay: index * 0.04 }}
+                >
+                  <Card className="bg-amber-500/5 border-amber-500/30 rounded-2xl overflow-hidden">
+                    <div className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2">
+                            <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                            <h3 className="font-display font-bold text-foreground text-base truncate">
+                              {route.name}
+                            </h3>
+                            <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                              Pending
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm">
+                            <div className="flex items-center gap-1.5 text-muted-foreground">
+                              <Navigation2 className="w-3.5 h-3.5 text-amber-500" />
+                              <span className="font-semibold text-foreground">
+                                {formatDistance(route.distance)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-muted-foreground">
+                              <MapPin className="w-3.5 h-3.5" />
+                              <span>{route.waypoints.length} pts</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-muted-foreground">
+                              <Clock className="w-3.5 h-3.5" />
+                              <span className="text-xs">
+                                {formatTimestamp(route.timestamp)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                </motion.div>
+              ))}
+
+              <div className="border-t border-border/30 pt-3">
+                <p className="text-xs text-muted-foreground px-1">
+                  Saved routes
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {isLoading && (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
@@ -135,25 +289,28 @@ export default function RoutesView({
           </div>
         )}
 
-        {!isLoading && !isError && routes?.length === 0 && (
-          <motion.div
-            data-ocid="routes.empty_state"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="flex flex-col items-center justify-center py-20 text-center px-6"
-          >
-            <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center mb-5">
-              <Route className="w-9 h-9 text-muted-foreground" />
-            </div>
-            <h3 className="font-display text-xl font-bold text-foreground mb-2">
-              No Routes Yet
-            </h3>
-            <p className="text-muted-foreground text-sm leading-relaxed">
-              Start recording your first route from the Map tab. Your journeys
-              will appear here.
-            </p>
-          </motion.div>
-        )}
+        {!isLoading &&
+          !isError &&
+          routes?.length === 0 &&
+          pendingRoutes.length === 0 && (
+            <motion.div
+              data-ocid="routes.empty_state"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="flex flex-col items-center justify-center py-20 text-center px-6"
+            >
+              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center mb-5">
+                <Route className="w-9 h-9 text-muted-foreground" />
+              </div>
+              <h3 className="font-display text-xl font-bold text-foreground mb-2">
+                No Routes Yet
+              </h3>
+              <p className="text-muted-foreground text-sm leading-relaxed">
+                Start recording your first route from the Map tab. Your journeys
+                will appear here.
+              </p>
+            </motion.div>
+          )}
 
         <AnimatePresence mode="popLayout">
           {routes?.map((route, index) => {

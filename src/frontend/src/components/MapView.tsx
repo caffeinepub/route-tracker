@@ -1,6 +1,3 @@
-import L from "leaflet";
-import { useCallback, useEffect, useRef, useState } from "react";
-import "leaflet/dist/leaflet.css";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,6 +14,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Slider } from "@/components/ui/slider";
 import { useSaveRoute } from "@/hooks/useQueries";
 import { exportGPX, exportKML } from "@/utils/exportRoute";
 import {
@@ -26,30 +31,40 @@ import {
   formatSpeed,
   haversineDistance,
 } from "@/utils/haversine";
-import iconRetinaUrl from "leaflet/dist/images/marker-icon-2x.png";
-import iconUrl from "leaflet/dist/images/marker-icon.png";
-import shadowUrl from "leaflet/dist/images/marker-shadow.png";
+import { savePendingRoute } from "@/utils/offlineRoutes";
+import {
+  cacheTile,
+  clearTileCache,
+  downloadArea,
+  estimateTileCount,
+  getCacheStats,
+  getTileFromCache,
+} from "@/utils/tileCache";
 import {
   AlertCircle,
   AlertTriangle,
+  CheckCircle2,
   Compass,
   Download,
   FileText,
+  HardDrive,
   Loader2,
+  LocateFixed,
   Map as MapIcon,
   Navigation,
   Pause,
   Play,
   Save,
+  Settings,
   Square,
   Trash2,
+  WifiOff,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { Coordinate } from "../backend.d";
-
-L.Icon.Default.mergeOptions({ iconRetinaUrl, iconUrl, shadowUrl });
 
 type RecordingState = "idle" | "recording" | "paused" | "stopped";
 
@@ -58,21 +73,31 @@ interface MapViewProps {
   onViewRouteClear?: () => void;
   referenceRoute?: { name: string; waypoints: Coordinate[] } | null;
   onClearReferenceRoute?: () => void;
+  deviationThreshold?: number;
+  onDeviationThresholdChange?: (value: number) => void;
+  isOnline: boolean;
 }
+
+// Gray placeholder tile data URL
+const GRAY_TILE =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAMLCwgAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==";
 
 export default function MapView({
   viewRoute,
   onViewRouteClear,
   referenceRoute,
   onClearReferenceRoute,
+  deviationThreshold = 5,
+  onDeviationThresholdChange,
+  isOnline,
 }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstance = useRef<L.Map | null>(null);
-  const polylineRef = useRef<L.Polyline | null>(null);
-  const referencePolylineRef = useRef<L.Polyline | null>(null);
-  const positionMarkerRef = useRef<L.Marker | null>(null);
-  const accuracyCircleRef = useRef<L.Circle | null>(null);
-  const startMarkerRef = useRef<L.Marker | null>(null);
+  const mapInstance = useRef<any>(null);
+  const polylineRef = useRef<any>(null);
+  const referencePolylineRef = useRef<any>(null);
+  const positionMarkerRef = useRef<any>(null);
+  const accuracyCircleRef = useRef<any>(null);
+  const startMarkerRef = useRef<any>(null);
   const watchIdRef = useRef<number | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -85,11 +110,35 @@ export default function MapView({
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [routeName, setRouteName] = useState("");
   const [isLocating, setIsLocating] = useState(false);
+  const [isLocatingHome, setIsLocatingHome] = useState(false);
   const [isDeviating, setIsDeviating] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
+
+  // Cache stats
+  const [cacheStats, setCacheStats] = useState<{
+    tileCount: number;
+    estimatedMB: number;
+  } | null>(null);
+  const [isClearingCache, setIsClearingCache] = useState(false);
+
+  // Download area state
+  const [maxDownloadZoom, setMaxDownloadZoom] = useState(16);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState({
+    done: 0,
+    total: 0,
+  });
+  const [mapBounds, setMapBounds] = useState<{
+    north: number;
+    south: number;
+    east: number;
+    west: number;
+  } | null>(null);
 
   const { mutateAsync: saveRoute, isPending: isSaving } = useSaveRoute();
 
-  // Initialize map
+  // Initialize map with offline-capable tile layer
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) return;
 
@@ -99,13 +148,58 @@ export default function MapView({
       zoomControl: true,
     });
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    // Custom offline-capable tile layer
+    const OfflineTileLayer = L.TileLayer.extend({
+      createTile(
+        coords: any,
+        done: (err: any, tile: HTMLImageElement) => void,
+      ) {
+        const tile = document.createElement("img");
+        tile.setAttribute("role", "presentation");
+        const url = `https://tile.openstreetmap.org/${coords.z}/${coords.x}/${coords.y}.png`;
+        getTileFromCache(url).then((cached) => {
+          if (cached) {
+            cached.blob().then((blob) => {
+              tile.src = URL.createObjectURL(blob);
+              done(null, tile);
+            });
+          } else if (navigator.onLine) {
+            tile.onload = () => done(null, tile);
+            tile.onerror = (e) => done(e, tile);
+            tile.src = url;
+            // Cache it passively
+            cacheTile(url).catch(() => {});
+          } else {
+            tile.src = GRAY_TILE;
+            tile.style.background = "#e5e7eb";
+            done(null, tile);
+          }
+        });
+        return tile;
+      },
+    });
+
+    new OfflineTileLayer("", {
       attribution:
         '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       maxZoom: 19,
     }).addTo(map);
 
     mapInstance.current = map;
+
+    // Track bounds changes for download
+    const updateBounds = () => {
+      const b = map.getBounds();
+      setMapBounds({
+        north: b.getNorth(),
+        south: b.getSouth(),
+        east: b.getEast(),
+        west: b.getWest(),
+      });
+    };
+    map.on("moveend", updateBounds);
+    map.on("zoomend", updateBounds);
+    updateBounds();
 
     // Try to get initial position
     if (navigator.geolocation) {
@@ -131,7 +225,6 @@ export default function MapView({
     const map = mapInstance.current;
     if (!map) return;
 
-    // Remove old reference polyline
     if (referencePolylineRef.current) {
       referencePolylineRef.current.remove();
       referencePolylineRef.current = null;
@@ -141,25 +234,19 @@ export default function MapView({
       const latlngs = referenceRoute.waypoints.map(
         (w) => [w.latitude, w.longitude] as [number, number],
       );
-      const refPoly = L.polyline(latlngs, {
+      referencePolylineRef.current = L.polyline(latlngs, {
         color: "#f59e0b",
         weight: 4,
-        opacity: 0.85,
-        dashArray: "8, 6",
+        opacity: 0.75,
+        dashArray: "8 6",
       }).addTo(map);
-      referencePolylineRef.current = refPoly;
-
-      // If idle, pan to reference route
-      if (recordingState === "idle") {
-        map.fitBounds(refPoly.getBounds(), { padding: [40, 40] });
-      }
     }
-  }, [referenceRoute, recordingState]);
+  }, [referenceRoute]);
 
-  // Display a saved/viewed route
+  // View a specific route on the map
   useEffect(() => {
-    if (!mapInstance.current || !viewRoute) return;
     const map = mapInstance.current;
+    if (!map || !viewRoute) return;
 
     if (polylineRef.current) {
       polylineRef.current.remove();
@@ -169,17 +256,12 @@ export default function MapView({
       startMarkerRef.current.remove();
       startMarkerRef.current = null;
     }
-    if (positionMarkerRef.current) {
-      positionMarkerRef.current.remove();
-      positionMarkerRef.current = null;
-    }
 
     if (viewRoute.waypoints.length < 2) return;
 
     const latlngs = viewRoute.waypoints.map(
       (w) => [w.latitude, w.longitude] as [number, number],
     );
-
     const poly = L.polyline(latlngs, {
       color: "#3b8df0",
       weight: 4,
@@ -303,13 +385,13 @@ export default function MapView({
             longitude,
             referenceRoute.waypoints,
           );
-          setIsDeviating(deviation > 5);
+          setIsDeviating(deviation > deviationThreshold);
         } else {
           setIsDeviating(false);
         }
       }
     },
-    [recordingState, referenceRoute],
+    [recordingState, referenceRoute, deviationThreshold],
   );
 
   const startRecording = useCallback(() => {
@@ -389,6 +471,24 @@ export default function MapView({
       toast.error("Please enter a route name");
       return;
     }
+    if (!isOnline) {
+      // Save offline
+      try {
+        await savePendingRoute({
+          name: routeName.trim(),
+          waypoints,
+          distance: distanceMeters,
+          timestamp: BigInt(Date.now()),
+        });
+        toast.success("Route saved offline — will sync when connected");
+        setSaveDialogOpen(false);
+        setRouteName("");
+        discardRecording();
+      } catch {
+        toast.error("Failed to save route offline");
+      }
+      return;
+    }
     try {
       await saveRoute({
         name: routeName.trim(),
@@ -403,7 +503,92 @@ export default function MapView({
     } catch {
       toast.error("Failed to save route");
     }
-  }, [routeName, waypoints, distanceMeters, saveRoute, discardRecording]);
+  }, [
+    routeName,
+    waypoints,
+    distanceMeters,
+    saveRoute,
+    discardRecording,
+    isOnline,
+  ]);
+
+  const handleLocateMe = useCallback(() => {
+    if (!navigator.geolocation) {
+      toast.error("Geolocation is not supported by your browser.");
+      return;
+    }
+    setIsLocatingHome(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const map = mapInstance.current;
+        if (map) {
+          map.setView([pos.coords.latitude, pos.coords.longitude], 17, {
+            animate: true,
+          });
+        }
+        setIsLocatingHome(false);
+      },
+      () => {
+        toast.error("Could not get your location. Make sure GPS is enabled.");
+        setIsLocatingHome(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  }, []);
+
+  const handleOpenSettings = useCallback(async () => {
+    setSettingsOpen(true);
+    const stats = await getCacheStats();
+    setCacheStats(stats);
+  }, []);
+
+  const handleClearCache = useCallback(async () => {
+    setIsClearingCache(true);
+    try {
+      await clearTileCache();
+      const stats = await getCacheStats();
+      setCacheStats(stats);
+      toast.success("Map cache cleared");
+    } catch {
+      toast.error("Failed to clear cache");
+    }
+    setIsClearingCache(false);
+  }, []);
+
+  const handleOpenDownload = useCallback(() => {
+    const map = mapInstance.current;
+    if (map) {
+      const b = map.getBounds();
+      setMapBounds({
+        north: b.getNorth(),
+        south: b.getSouth(),
+        east: b.getEast(),
+        west: b.getWest(),
+      });
+    }
+    setDownloadSheetOpen(true);
+  }, []);
+
+  const handleDownload = useCallback(async () => {
+    if (!mapBounds) return;
+    setIsDownloading(true);
+    setDownloadProgress({ done: 0, total: 0 });
+    try {
+      const total = await downloadArea(
+        mapBounds,
+        12,
+        maxDownloadZoom,
+        (done, tot) => {
+          setDownloadProgress({ done, total: tot });
+        },
+      );
+      toast.success(`Downloaded ${total} map tiles for offline use`);
+      setDownloadSheetOpen(false);
+    } catch {
+      toast.error("Download failed");
+    }
+    setIsDownloading(false);
+  }, [mapBounds, maxDownloadZoom]);
 
   useEffect(() => {
     return () => {
@@ -416,9 +601,12 @@ export default function MapView({
   const isRecordingActive =
     recordingState === "recording" || recordingState === "paused";
 
-  // How far below the stats/geo-error panel the deviation banner sits
-  // We show deviation only when actively recording
   const showDeviationWarning = isDeviating && recordingState === "recording";
+
+  const estimatedTiles = mapBounds
+    ? estimateTileCount(mapBounds, 12, maxDownloadZoom)
+    : 0;
+  const estimatedMB = ((estimatedTiles * 15) / 1024).toFixed(1);
 
   return (
     <div className="relative w-full h-full">
@@ -427,6 +615,22 @@ export default function MapView({
         data-ocid="map.canvas_target"
         className="w-full h-full"
       />
+
+      {/* Offline / Online status badge */}
+      <AnimatePresence>
+        {!isOnline && (
+          <motion.div
+            key="offline-badge"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="absolute top-4 left-1/2 -translate-x-1/2 z-[1001] flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-500/90 backdrop-blur-md border border-red-400/60 shadow-lg"
+          >
+            <WifiOff className="w-3.5 h-3.5 text-white" />
+            <span className="text-xs font-bold text-white">Offline</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {isLocating && (
@@ -507,7 +711,7 @@ export default function MapView({
           >
             <AlertTriangle className="w-4 h-4 text-white flex-shrink-0" />
             <p className="text-sm font-bold text-white flex-1">
-              Off Route — more than 5m from reference
+              Off Route — more than {deviationThreshold}m from reference
             </p>
           </motion.div>
         )}
@@ -590,6 +794,50 @@ export default function MapView({
         )}
       </AnimatePresence>
 
+      {/* Map overlay buttons: Download + Settings + Locate */}
+      <div className="absolute bottom-28 right-4 z-[1000] flex flex-col gap-2">
+        <motion.button
+          data-ocid="download_area.open_modal_button"
+          type="button"
+          onClick={handleOpenDownload}
+          whileTap={{ scale: 0.92 }}
+          whileHover={{ scale: 1.05 }}
+          className="w-11 h-11 rounded-full bg-card/85 backdrop-blur-lg border border-border/50 shadow-glass flex items-center justify-center text-foreground hover:text-primary hover:border-primary/50 transition-colors"
+          title="Download map area"
+        >
+          <Download className="w-5 h-5" />
+        </motion.button>
+
+        <motion.button
+          data-ocid="settings.open_modal_button"
+          type="button"
+          onClick={handleOpenSettings}
+          whileTap={{ scale: 0.92 }}
+          whileHover={{ scale: 1.05 }}
+          className="w-11 h-11 rounded-full bg-card/85 backdrop-blur-lg border border-border/50 shadow-glass flex items-center justify-center text-foreground hover:text-primary hover:border-primary/50 transition-colors"
+          title="Settings"
+        >
+          <Settings className="w-5 h-5" />
+        </motion.button>
+
+        <motion.button
+          data-ocid="map.locate_button"
+          type="button"
+          onClick={handleLocateMe}
+          disabled={isLocatingHome}
+          whileTap={{ scale: 0.92 }}
+          whileHover={{ scale: 1.05 }}
+          className="w-11 h-11 rounded-full bg-card/85 backdrop-blur-lg border border-border/50 shadow-glass flex items-center justify-center text-foreground hover:text-primary hover:border-primary/50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          title="Go to my location"
+        >
+          {isLocatingHome ? (
+            <Loader2 className="w-5 h-5 animate-spin text-primary" />
+          ) : (
+            <LocateFixed className="w-5 h-5" />
+          )}
+        </motion.button>
+      </div>
+
       <div className="absolute bottom-4 left-4 right-4 z-[1000]">
         <motion.div
           className="bg-card/85 backdrop-blur-lg border border-border/50 rounded-2xl px-5 py-4 shadow-glass"
@@ -668,7 +916,6 @@ export default function MapView({
                   <span>{waypoints.length} points</span>
                 </div>
 
-                {/* Export row */}
                 <div className="flex justify-center">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -707,7 +954,6 @@ export default function MapView({
                   </DropdownMenu>
                 </div>
 
-                {/* Save / Discard row */}
                 <div className="flex gap-3">
                   <Button
                     data-ocid="save.primary_button"
@@ -716,7 +962,7 @@ export default function MapView({
                     className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl h-12 font-display font-semibold gap-2"
                   >
                     <Save className="w-4 h-4" />
-                    Save Route
+                    {isOnline ? "Save Route" : "Save Offline"}
                   </Button>
                   <Button
                     data-ocid="discard.button"
@@ -735,30 +981,38 @@ export default function MapView({
         </motion.div>
       </div>
 
+      {/* Save Route Dialog */}
       <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
         <DialogContent className="mx-4 rounded-2xl bg-card border-border max-w-sm">
           <DialogHeader>
-            <DialogTitle className="font-display text-lg">
-              Save Route
+            <DialogTitle className="font-display">
+              {isOnline ? "Save Route" : "Save Route Offline"}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-2 py-2">
-            <Label
-              htmlFor="route-name"
-              className="text-muted-foreground text-sm"
-            >
-              Route name
+          {!isOnline && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-600 dark:text-amber-400">
+              <WifiOff className="w-3.5 h-3.5 flex-shrink-0" />
+              Route will sync to the cloud when you're back online.
+            </div>
+          )}
+          <div className="space-y-3">
+            <Label htmlFor="route-name" className="text-sm font-semibold">
+              Route Name
             </Label>
             <Input
+              data-ocid="route.input"
               id="route-name"
-              data-ocid="route.save_input"
+              placeholder="e.g. Morning Run"
               value={routeName}
               onChange={(e) => setRouteName(e.target.value)}
-              placeholder="e.g. Morning Run in the Park"
-              className="bg-input border-border rounded-xl h-11"
               onKeyDown={(e) => e.key === "Enter" && handleSave()}
+              className="rounded-xl"
               autoFocus
             />
+            <p className="text-xs text-muted-foreground">
+              {formatDistance(distanceMeters)} &middot; {waypoints.length}{" "}
+              waypoints
+            </p>
           </div>
           <DialogFooter className="flex gap-2">
             <Button
@@ -779,6 +1033,237 @@ export default function MapView({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Download Area Sheet */}
+      <Sheet open={downloadSheetOpen} onOpenChange={setDownloadSheetOpen}>
+        <SheetContent
+          data-ocid="download_area.sheet"
+          side="bottom"
+          className="rounded-t-2xl bg-card border-border px-6 pb-8"
+        >
+          <SheetHeader className="mb-6">
+            <SheetTitle className="font-display text-lg flex items-center gap-2">
+              <Download className="w-4 h-4 text-primary" />
+              Download Map Area
+            </SheetTitle>
+          </SheetHeader>
+
+          <div className="space-y-5">
+            {/* Current bounds */}
+            {mapBounds && (
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-muted/50 rounded-xl px-3 py-2">
+                  <p className="text-muted-foreground">North</p>
+                  <p className="font-mono font-semibold">
+                    {mapBounds.north.toFixed(4)}
+                  </p>
+                </div>
+                <div className="bg-muted/50 rounded-xl px-3 py-2">
+                  <p className="text-muted-foreground">South</p>
+                  <p className="font-mono font-semibold">
+                    {mapBounds.south.toFixed(4)}
+                  </p>
+                </div>
+                <div className="bg-muted/50 rounded-xl px-3 py-2">
+                  <p className="text-muted-foreground">East</p>
+                  <p className="font-mono font-semibold">
+                    {mapBounds.east.toFixed(4)}
+                  </p>
+                </div>
+                <div className="bg-muted/50 rounded-xl px-3 py-2">
+                  <p className="text-muted-foreground">West</p>
+                  <p className="font-mono font-semibold">
+                    {mapBounds.west.toFixed(4)}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Zoom range */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-foreground text-sm">
+                    Max Zoom Level
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Higher = more detail, more tiles
+                  </p>
+                </div>
+                <span className="text-sm font-bold text-primary tabular-nums bg-primary/10 px-3 py-1 rounded-full">
+                  {maxDownloadZoom}
+                </span>
+              </div>
+              <Slider
+                min={12}
+                max={17}
+                step={1}
+                value={[maxDownloadZoom]}
+                onValueChange={([val]) => setMaxDownloadZoom(val)}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>12 (overview)</span>
+                <span>17 (street detail)</span>
+              </div>
+            </div>
+
+            {/* Estimates */}
+            <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+              <div className="text-sm">
+                <span className="text-muted-foreground">Estimated: </span>
+                <span className="font-bold text-foreground">
+                  {estimatedTiles.toLocaleString()} tiles
+                </span>
+                <span className="text-muted-foreground">
+                  {" "}
+                  (~{estimatedMB} MB)
+                </span>
+              </div>
+            </div>
+
+            {/* Download progress */}
+            {isDownloading && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Downloading...</span>
+                  <span>
+                    {downloadProgress.done} / {downloadProgress.total}
+                  </span>
+                </div>
+                <Progress
+                  value={
+                    downloadProgress.total > 0
+                      ? (downloadProgress.done / downloadProgress.total) * 100
+                      : 0
+                  }
+                  className="h-2 rounded-full"
+                />
+              </div>
+            )}
+
+            <Button
+              data-ocid="download_area.submit_button"
+              onClick={handleDownload}
+              disabled={isDownloading || !isOnline}
+              className="w-full bg-primary text-primary-foreground rounded-xl h-12 font-display font-semibold gap-2"
+            >
+              {isDownloading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Downloading...
+                </>
+              ) : !isOnline ? (
+                <>
+                  <WifiOff className="w-4 h-4" />
+                  Offline — Connect to Download
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  Download {estimatedTiles.toLocaleString()} Tiles
+                </>
+              )}
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Settings Sheet */}
+      <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <SheetContent
+          data-ocid="settings.sheet"
+          side="bottom"
+          className="rounded-t-2xl bg-card border-border px-6 pb-8"
+        >
+          <SheetHeader className="mb-6">
+            <SheetTitle className="font-display text-lg flex items-center gap-2">
+              <Settings className="w-4 h-4 text-primary" />
+              Settings
+            </SheetTitle>
+          </SheetHeader>
+
+          <div className="space-y-6">
+            {/* Deviation threshold */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-foreground text-sm">
+                    Deviation Threshold
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Warn when off route by more than this distance
+                  </p>
+                </div>
+                <span className="text-sm font-bold text-primary tabular-nums bg-primary/10 px-3 py-1 rounded-full">
+                  {deviationThreshold} m
+                </span>
+              </div>
+              <Slider
+                data-ocid="settings.deviation_threshold.input"
+                min={5}
+                max={100}
+                step={5}
+                value={[deviationThreshold]}
+                onValueChange={([val]) => onDeviationThresholdChange?.(val)}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>5 m</span>
+                <span>100 m</span>
+              </div>
+            </div>
+
+            {/* Map Cache section */}
+            <div className="space-y-3 border-t border-border/40 pt-5">
+              <div className="flex items-center gap-2">
+                <HardDrive className="w-4 h-4 text-primary" />
+                <p className="font-semibold text-foreground text-sm">
+                  Map Cache
+                </p>
+              </div>
+              {cacheStats ? (
+                <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+                  <div className="text-sm">
+                    <span className="font-bold text-foreground">
+                      {cacheStats.tileCount.toLocaleString()}
+                    </span>
+                    <span className="text-muted-foreground"> tiles cached</span>
+                    <span className="text-muted-foreground ml-2">
+                      (~{cacheStats.estimatedMB.toFixed(1)} MB)
+                    </span>
+                  </div>
+                  {cacheStats.tileCount === 0 && (
+                    <CheckCircle2 className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </div>
+              ) : (
+                <div className="h-12 bg-muted/30 rounded-xl animate-pulse" />
+              )}
+              <Button
+                data-ocid="settings.clear_cache_button"
+                variant="outline"
+                size="sm"
+                disabled={isClearingCache || cacheStats?.tileCount === 0}
+                onClick={handleClearCache}
+                className="w-full rounded-xl border-destructive/30 text-destructive hover:bg-destructive/10"
+              >
+                {isClearingCache ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" />
+                    Clearing...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5 mr-2" />
+                    Clear Cache
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
