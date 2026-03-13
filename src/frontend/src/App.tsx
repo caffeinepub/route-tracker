@@ -1,17 +1,18 @@
 import DownloadedMapsView from "@/components/DownloadedMapsView";
+import LiveTrackingView from "@/components/LiveTrackingView";
 import MapView from "@/components/MapView";
 import RoutesView from "@/components/RoutesView";
 import { Toaster } from "@/components/ui/sonner";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Download, HardDrive, List, MapIcon, X } from "lucide-react";
+import { Download, HardDrive, List, MapIcon, Radio, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState } from "react";
 import type { Coordinate } from "./backend.d";
 
 const queryClient = new QueryClient();
 
-type Tab = "map" | "routes" | "downloads";
+type Tab = "map" | "routes" | "downloads" | "live";
 
 interface ViewRoute {
   name: string;
@@ -31,6 +32,9 @@ function AppContent() {
     const stored = localStorage.getItem("deviationThreshold");
     return stored ? Number(stored) : 5;
   });
+  const [autoJoinSessionId, setAutoJoinSessionId] = useState<string | null>(
+    null,
+  );
   const isOnline = useOnlineStatus();
 
   // PWA install prompt
@@ -42,10 +46,16 @@ function AppContent() {
     // Register service worker
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js").catch(() => {
-          // SW registration failed silently
-        });
+        navigator.serviceWorker.register("/sw.js").catch(() => {});
       });
+    }
+
+    // Check for live session URL param
+    const params = new URLSearchParams(window.location.search);
+    const liveSessionId = params.get("liveSession");
+    if (liveSessionId) {
+      setAutoJoinSessionId(liveSessionId);
+      setActiveTab("live");
     }
 
     // Listen for beforeinstallprompt
@@ -127,7 +137,7 @@ function AppContent() {
                 isOnline={isOnline}
               />
             </motion.div>
-          ) : (
+          ) : activeTab === "downloads" ? (
             <motion.div
               key="downloads"
               initial={{ opacity: 0, x: 20 }}
@@ -137,6 +147,17 @@ function AppContent() {
               className="absolute inset-0"
             >
               <DownloadedMapsView />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="live"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.2 }}
+              className="absolute inset-0"
+            >
+              <LiveTrackingView autoJoinSessionId={autoJoinSessionId} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -214,6 +235,7 @@ function AppContent() {
             </div>
             <span className="text-xs font-semibold">Map</span>
           </button>
+
           <button
             type="button"
             data-ocid="nav.routes_tab"
@@ -239,6 +261,7 @@ function AppContent() {
             </div>
             <span className="text-xs font-semibold">Routes</span>
           </button>
+
           <button
             type="button"
             data-ocid="nav.downloads_tab"
@@ -263,6 +286,32 @@ function AppContent() {
               )}
             </div>
             <span className="text-xs font-semibold">Downloaded</span>
+          </button>
+
+          <button
+            type="button"
+            data-ocid="live.tab"
+            onClick={() => setActiveTab("live")}
+            className={`flex-1 flex flex-col items-center gap-1 py-3 px-2 transition-all duration-200 ${
+              activeTab === "live"
+                ? "text-live"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <div
+              className={`relative p-1.5 rounded-xl transition-all duration-200 ${
+                activeTab === "live" ? "bg-live/15" : ""
+              }`}
+            >
+              <Radio className="w-5 h-5" />
+              {activeTab === "live" && (
+                <motion.div
+                  layoutId="tab-indicator"
+                  className="absolute inset-0 bg-live/15 rounded-xl"
+                />
+              )}
+            </div>
+            <span className="text-xs font-semibold">Live</span>
           </button>
         </div>
       </nav>

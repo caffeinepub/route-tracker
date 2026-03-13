@@ -69,6 +69,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { Coordinate } from "../backend.d";
+import { LiveCompass } from "./LiveCompass";
 
 type RecordingState = "idle" | "recording" | "paused" | "stopped";
 
@@ -111,6 +112,8 @@ export default function MapView({
   const accuracyCircleRef = useRef<any>(null);
   const startMarkerRef = useRef<any>(null);
   const watchIdRef = useRef<number | null>(null);
+  const persistentWatchIdRef = useRef<number | null>(null);
+  const hasCenteredRef = useRef<boolean>(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
@@ -247,6 +250,7 @@ export default function MapView({
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+          hasCenteredRef.current = true;
           setIsLocating(false);
         },
         () => setIsLocating(false),
@@ -254,7 +258,48 @@ export default function MapView({
       );
     }
 
+    persistentWatchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        const map = mapInstance.current;
+        if (!map) return;
+        if (!hasCenteredRef.current) {
+          map.setView([latitude, longitude], 16);
+          hasCenteredRef.current = true;
+        }
+        const posIcon = L.divIcon({
+          className: "",
+          html: `<div class="position-marker-pulse"><div class="position-marker-dot"></div></div>`,
+          iconSize: [16, 16],
+          iconAnchor: [8, 8],
+        });
+        if (positionMarkerRef.current) {
+          positionMarkerRef.current.setLatLng([latitude, longitude]);
+        } else {
+          positionMarkerRef.current = L.marker([latitude, longitude], {
+            icon: posIcon,
+          }).addTo(map);
+        }
+        if (accuracyCircleRef.current) {
+          accuracyCircleRef.current.setLatLng([latitude, longitude]);
+          accuracyCircleRef.current.setRadius(accuracy);
+        } else {
+          accuracyCircleRef.current = L.circle([latitude, longitude], {
+            radius: accuracy,
+            className: "leaflet-accuracy-circle",
+            weight: 1,
+          }).addTo(map);
+        }
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    );
+
     return () => {
+      if (persistentWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(persistentWatchIdRef.current);
+        persistentWatchIdRef.current = null;
+      }
       map.remove();
       mapInstance.current = null;
     };
@@ -380,7 +425,7 @@ export default function MapView({
             polylineRef.current.setLatLngs(latlngs);
           } else {
             polylineRef.current = L.polyline(latlngs, {
-              color: "#3b8df0",
+              color: "#ef4444",
               weight: 4,
               opacity: 0.9,
             }).addTo(map);
@@ -650,6 +695,8 @@ export default function MapView({
     return () => {
       if (watchIdRef.current !== null)
         navigator.geolocation.clearWatch(watchIdRef.current);
+      if (persistentWatchIdRef.current !== null)
+        navigator.geolocation.clearWatch(persistentWatchIdRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
@@ -671,6 +718,7 @@ export default function MapView({
         data-ocid="map.canvas_target"
         className="w-full h-full"
       />
+      <LiveCompass />
 
       {/* Offline / Online status badge */}
       <AnimatePresence>

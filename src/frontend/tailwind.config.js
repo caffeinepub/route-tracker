@@ -73,6 +73,10 @@ export default {
         success: "oklch(var(--success))",
         warning: "oklch(var(--warning))",
         "track-blue": "oklch(var(--track-blue))",
+        live: {
+          DEFAULT: "oklch(var(--live) / <alpha-value>)",
+          foreground: "oklch(var(--live-foreground))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",

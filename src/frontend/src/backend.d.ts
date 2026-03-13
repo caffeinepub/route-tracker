@@ -17,8 +17,27 @@ export interface Route {
     distance: number;
     timestamp: bigint;
 }
+export interface Participant {
+    id: string;
+    name: string;
+    lat: number;
+    lng: number;
+    lastUpdated: bigint;
+}
+export interface SessionInfo {
+    id: string;
+    adminParticipantId: string;
+    createdAt: bigint;
+}
 export interface backendInterface {
     deleteRoute(index: bigint): Promise<void>;
     getRoutes(): Promise<Array<Route>>;
     saveRoute(route: Route): Promise<void>;
+    createSession(adminName: string): Promise<{ sessionId: string; participantId: string }>;
+    joinSession(sessionId: string, participantName: string): Promise<Option<{ participantId: string }>>;
+    updateLocation(sessionId: string, participantId: string, lat: number, lng: number): Promise<boolean>;
+    getSessionParticipants(sessionId: string): Promise<Option<Array<Participant>>>;
+    getSession(sessionId: string): Promise<Option<SessionInfo>>;
+    leaveSession(sessionId: string, participantId: string): Promise<boolean>;
+    endSession(sessionId: string, participantId: string): Promise<boolean>;
 }
