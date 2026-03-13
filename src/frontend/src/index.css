@@ -1,0 +1,162 @@
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("/assets/fonts/BricolageGrotesque.woff2") format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Figtree";
+  src: url("/assets/fonts/Figtree.woff2") format("woff2");
+  font-weight: 300 900;
+  font-display: swap;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* GPS Tracker - Dark theme optimized for outdoor use */
+    --background: 0.14 0.008 240;
+    --foreground: 0.95 0.01 240;
+    --card: 0.18 0.01 240;
+    --card-foreground: 0.95 0.01 240;
+    --popover: 0.16 0.01 240;
+    --popover-foreground: 0.95 0.01 240;
+    --primary: 0.72 0.18 150;
+    --primary-foreground: 0.12 0.005 240;
+    --secondary: 0.25 0.015 240;
+    --secondary-foreground: 0.88 0.01 240;
+    --muted: 0.22 0.012 240;
+    --muted-foreground: 0.62 0.015 240;
+    --accent: 0.65 0.22 160;
+    --accent-foreground: 0.12 0.005 240;
+    --destructive: 0.6 0.22 25;
+    --destructive-foreground: 0.98 0 0;
+    --border: 0.28 0.015 240;
+    --input: 0.22 0.012 240;
+    --ring: 0.72 0.18 150;
+    --radius: 0.75rem;
+    --success: 0.72 0.18 150;
+    --warning: 0.78 0.19 80;
+    --track-blue: 0.62 0.18 240;
+    --chart-1: 0.72 0.18 150;
+    --chart-2: 0.62 0.18 240;
+    --chart-3: 0.78 0.19 80;
+    --chart-4: 0.6 0.22 25;
+    --chart-5: 0.68 0.2 300;
+    --sidebar: 0.14 0.008 240;
+    --sidebar-foreground: 0.95 0.01 240;
+    --sidebar-primary: 0.72 0.18 150;
+    --sidebar-primary-foreground: 0.12 0.005 240;
+    --sidebar-accent: 0.22 0.012 240;
+    --sidebar-accent-foreground: 0.88 0.01 240;
+    --sidebar-border: 0.28 0.015 240;
+    --sidebar-ring: 0.72 0.18 150;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Figtree", sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Bricolage Grotesque", sans-serif;
+  }
+}
+
+/* Leaflet map overrides */
+.leaflet-container {
+  background: oklch(0.14 0.008 240);
+  font-family: "Figtree", sans-serif;
+}
+
+.leaflet-control-zoom a {
+  background: oklch(0.18 0.01 240) !important;
+  color: oklch(0.95 0.01 240) !important;
+  border-color: oklch(0.28 0.015 240) !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: oklch(0.25 0.015 240) !important;
+}
+
+.leaflet-control-attribution {
+  background: oklch(0.14 0.008 240 / 0.85) !important;
+  color: oklch(0.62 0.015 240) !important;
+}
+
+.leaflet-control-attribution a {
+  color: oklch(0.72 0.18 150) !important;
+}
+
+/* Pulsing position marker */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+.position-marker-pulse {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
+
+.position-marker-pulse::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: oklch(0.62 0.18 240 / 0.4);
+  animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+.position-marker-dot {
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: oklch(0.72 0.22 230);
+  border: 2px solid white;
+  box-shadow: 0 0 8px oklch(0.62 0.18 240 / 0.8);
+}
+
+/* Accuracy circle override */
+.leaflet-accuracy-circle {
+  stroke: oklch(0.62 0.18 240) !important;
+  fill: oklch(0.62 0.18 240 / 0.1) !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.35 0.015 240);
+  border-radius: 2px;
+}
