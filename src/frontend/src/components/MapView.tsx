@@ -15,12 +15,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { Slider } from "@/components/ui/slider";
 import { useSaveRoute } from "@/hooks/useQueries";
 import { exportGPX, exportKML } from "@/utils/exportRoute";
@@ -156,30 +150,6 @@ export default function MapView({
   );
 
   const { mutateAsync: saveRoute, isPending: isSaving } = useSaveRoute();
-
-  // Fix: clear pointer-events/scroll-lock after sheets close (Radix Sheet leaves body locked on mobile)
-  useEffect(() => {
-    if (!settingsOpen && !downloadSheetOpen) {
-      const timer = setTimeout(() => {
-        document.body.style.removeProperty("pointer-events");
-        document.body.style.removeProperty("overflow");
-        document.body.removeAttribute("data-scroll-locked");
-        // Re-enable pointer events on the map container explicitly
-        if (mapRef.current) {
-          mapRef.current.style.removeProperty("pointer-events");
-          (mapRef.current as HTMLElement).style.pointerEvents = "auto";
-        }
-        // Re-enable Leaflet map interactions
-        if (mapInstance.current) {
-          mapInstance.current.dragging.enable();
-          mapInstance.current.touchZoom.enable();
-          mapInstance.current.scrollWheelZoom.enable();
-          mapInstance.current.doubleClickZoom.enable();
-        }
-      }, 350);
-      return () => clearTimeout(timer);
-    }
-  }, [settingsOpen, downloadSheetOpen]);
 
   // Initialize map with offline-capable tile layer
   useEffect(() => {
@@ -1138,305 +1108,341 @@ export default function MapView({
         </DialogContent>
       </Dialog>
 
-      {/* Download Area Sheet */}
-      <Sheet open={downloadSheetOpen} onOpenChange={setDownloadSheetOpen}>
-        <SheetContent
-          data-ocid="download_area.sheet"
-          side="bottom"
-          className="rounded-t-2xl bg-card border-border px-6 pb-8 max-h-[85vh] overflow-y-auto"
-        >
-          <SheetHeader className="mb-6">
-            <SheetTitle className="font-display text-lg flex items-center gap-2">
-              <Download className="w-4 h-4 text-primary" />
-              Download Map Area
-            </SheetTitle>
-          </SheetHeader>
+      {/* Download Area Panel */}
+      {downloadSheetOpen && (
+        <div
+          role="button"
+          tabIndex={-1}
+          aria-label="Close panel"
+          className="fixed inset-0"
+          style={{ zIndex: 9998 }}
+          onClick={() => setDownloadSheetOpen(false)}
+          onKeyDown={(e) => e.key === "Escape" && setDownloadSheetOpen(false)}
+        />
+      )}
+      <div
+        data-ocid="download_area.sheet"
+        className="fixed left-0 right-0 bottom-0 rounded-t-2xl bg-card border-t border-border px-6 pb-8 max-h-[85vh] overflow-y-auto transition-transform duration-300"
+        style={{
+          zIndex: 9999,
+          transform: downloadSheetOpen ? "translateY(0)" : "translateY(100%)",
+        }}
+      >
+        <div className="mb-6 flex items-center justify-between pt-5">
+          <div className="font-display text-lg flex items-center gap-2 font-semibold">
+            <Download className="w-4 h-4 text-primary" />
+            Download Map Area
+          </div>
+          <button
+            type="button"
+            className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted transition-colors"
+            onClick={() => setDownloadSheetOpen(false)}
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
-          <div className="space-y-5">
-            {/* Name input */}
+        <div className="space-y-5">
+          {/* Name input */}
+          <div className="space-y-2">
+            <Label htmlFor="download-name" className="text-sm font-semibold">
+              Map Name
+            </Label>
+            <Input
+              data-ocid="download_area.input"
+              id="download-name"
+              placeholder="e.g. City Centre"
+              value={downloadName}
+              onChange={(e) => setDownloadName(e.target.value)}
+              className="rounded-xl"
+            />
+          </div>
+
+          {/* Current bounds */}
+          {mapBounds && (
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="bg-muted/50 rounded-xl px-3 py-2">
+                <p className="text-muted-foreground">North</p>
+                <p className="font-mono font-semibold">
+                  {mapBounds.north.toFixed(4)}
+                </p>
+              </div>
+              <div className="bg-muted/50 rounded-xl px-3 py-2">
+                <p className="text-muted-foreground">South</p>
+                <p className="font-mono font-semibold">
+                  {mapBounds.south.toFixed(4)}
+                </p>
+              </div>
+              <div className="bg-muted/50 rounded-xl px-3 py-2">
+                <p className="text-muted-foreground">East</p>
+                <p className="font-mono font-semibold">
+                  {mapBounds.east.toFixed(4)}
+                </p>
+              </div>
+              <div className="bg-muted/50 rounded-xl px-3 py-2">
+                <p className="text-muted-foreground">West</p>
+                <p className="font-mono font-semibold">
+                  {mapBounds.west.toFixed(4)}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Zoom range */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold text-foreground text-sm">
+                  Max Zoom Level
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Higher = more detail, more tiles
+                </p>
+              </div>
+              <span className="text-sm font-bold text-primary tabular-nums bg-primary/10 px-3 py-1 rounded-full">
+                {maxDownloadZoom}
+              </span>
+            </div>
+            <Slider
+              min={12}
+              max={17}
+              step={1}
+              value={[maxDownloadZoom]}
+              onValueChange={([val]) => setMaxDownloadZoom(val)}
+              className="w-full"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>12 (overview)</span>
+              <span>17 (street detail)</span>
+            </div>
+          </div>
+
+          {/* Estimates */}
+          <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+            <div className="text-sm">
+              <span className="text-muted-foreground">Estimated: </span>
+              <span className="font-bold text-foreground">
+                {estimatedTiles.toLocaleString()} tiles
+              </span>
+              <span className="text-muted-foreground">
+                {" "}
+                (~{estimatedMB} MB)
+              </span>
+            </div>
+          </div>
+
+          {/* Download progress */}
+          {isDownloading && (
             <div className="space-y-2">
-              <Label htmlFor="download-name" className="text-sm font-semibold">
-                Map Name
-              </Label>
-              <Input
-                data-ocid="download_area.input"
-                id="download-name"
-                placeholder="e.g. City Centre"
-                value={downloadName}
-                onChange={(e) => setDownloadName(e.target.value)}
-                className="rounded-xl"
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Downloading...</span>
+                <span>
+                  {downloadProgress.done} / {downloadProgress.total}
+                </span>
+              </div>
+              <Progress
+                value={
+                  downloadProgress.total > 0
+                    ? (downloadProgress.done / downloadProgress.total) * 100
+                    : 0
+                }
+                className="h-2 rounded-full"
               />
             </div>
+          )}
 
-            {/* Current bounds */}
-            {mapBounds && (
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="bg-muted/50 rounded-xl px-3 py-2">
-                  <p className="text-muted-foreground">North</p>
-                  <p className="font-mono font-semibold">
-                    {mapBounds.north.toFixed(4)}
-                  </p>
-                </div>
-                <div className="bg-muted/50 rounded-xl px-3 py-2">
-                  <p className="text-muted-foreground">South</p>
-                  <p className="font-mono font-semibold">
-                    {mapBounds.south.toFixed(4)}
-                  </p>
-                </div>
-                <div className="bg-muted/50 rounded-xl px-3 py-2">
-                  <p className="text-muted-foreground">East</p>
-                  <p className="font-mono font-semibold">
-                    {mapBounds.east.toFixed(4)}
-                  </p>
-                </div>
-                <div className="bg-muted/50 rounded-xl px-3 py-2">
-                  <p className="text-muted-foreground">West</p>
-                  <p className="font-mono font-semibold">
-                    {mapBounds.west.toFixed(4)}
-                  </p>
-                </div>
+          <Button
+            data-ocid="download_area.submit_button"
+            onClick={handleDownload}
+            disabled={isDownloading || !isOnline || !downloadName.trim()}
+            className="w-full bg-primary text-primary-foreground rounded-xl h-12 font-display font-semibold gap-2"
+          >
+            {isDownloading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Downloading...
+              </>
+            ) : !isOnline ? (
+              <>
+                <WifiOff className="w-4 h-4" />
+                Offline — Connect to Download
+              </>
+            ) : !downloadName.trim() ? (
+              <>
+                <Download className="w-4 h-4" />
+                Enter a name to download
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                Download {estimatedTiles.toLocaleString()} Tiles
+              </>
+            )}
+          </Button>
+
+          {/* Downloaded Maps list */}
+          <div className="border-t border-border/40 pt-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <HardDrive className="w-4 h-4 text-primary" />
+              <p className="font-semibold text-foreground text-sm">
+                Downloaded Maps
+              </p>
+            </div>
+
+            {downloadRecords.length === 0 ? (
+              <p
+                data-ocid="download_area.empty_state"
+                className="text-xs text-muted-foreground text-center py-3"
+              >
+                No maps downloaded yet
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {downloadRecords.map((record, idx) => (
+                  <div
+                    key={record.id}
+                    data-ocid={`download_area.item.${idx + 1}`}
+                    className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3 gap-3"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm text-foreground truncate">
+                        {record.name}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {formatRecordDate(record.date)} &middot;{" "}
+                        {record.tileCount.toLocaleString()} tiles (~
+                        {((record.tileCount * 15) / 1024).toFixed(1)} MB)
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      data-ocid={`download_area.delete_button.${idx + 1}`}
+                      onClick={() => handleDeleteRecord(record.id)}
+                      className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                      title="Delete this download record"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
+          </div>
+        </div>
+      </div>
 
-            {/* Zoom range */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-foreground text-sm">
-                    Max Zoom Level
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Higher = more detail, more tiles
-                  </p>
-                </div>
-                <span className="text-sm font-bold text-primary tabular-nums bg-primary/10 px-3 py-1 rounded-full">
-                  {maxDownloadZoom}
-                </span>
+      {/* Settings Panel */}
+      {settingsOpen && (
+        <div
+          role="button"
+          tabIndex={-1}
+          aria-label="Close panel"
+          className="fixed inset-0"
+          style={{ zIndex: 9998 }}
+          onClick={() => setSettingsOpen(false)}
+          onKeyDown={(e) => e.key === "Escape" && setSettingsOpen(false)}
+        />
+      )}
+      <div
+        data-ocid="settings.sheet"
+        className="fixed left-0 right-0 bottom-0 rounded-t-2xl bg-card border-t border-border px-6 pb-8 max-h-[85vh] overflow-y-auto transition-transform duration-300"
+        style={{
+          zIndex: 9999,
+          transform: settingsOpen ? "translateY(0)" : "translateY(100%)",
+        }}
+      >
+        <div className="mb-6 flex items-center justify-between pt-5">
+          <div className="font-display text-lg flex items-center gap-2 font-semibold">
+            <Settings className="w-4 h-4 text-primary" />
+            Settings
+          </div>
+          <button
+            type="button"
+            className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted transition-colors"
+            onClick={() => setSettingsOpen(false)}
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="space-y-6">
+          {/* Deviation threshold */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold text-foreground text-sm">
+                  Deviation Threshold
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Warn when off route by more than this distance
+                </p>
               </div>
-              <Slider
-                min={12}
-                max={17}
-                step={1}
-                value={[maxDownloadZoom]}
-                onValueChange={([val]) => setMaxDownloadZoom(val)}
-                className="w-full"
-              />
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>12 (overview)</span>
-                <span>17 (street detail)</span>
-              </div>
+              <span className="text-sm font-bold text-primary tabular-nums bg-primary/10 px-3 py-1 rounded-full">
+                {deviationThreshold} m
+              </span>
             </div>
-
-            {/* Estimates */}
-            <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
-              <div className="text-sm">
-                <span className="text-muted-foreground">Estimated: </span>
-                <span className="font-bold text-foreground">
-                  {estimatedTiles.toLocaleString()} tiles
-                </span>
-                <span className="text-muted-foreground">
-                  {" "}
-                  (~{estimatedMB} MB)
-                </span>
-              </div>
+            <Slider
+              data-ocid="settings.deviation_threshold.input"
+              min={5}
+              max={100}
+              step={5}
+              value={[deviationThreshold]}
+              onValueChange={([val]) => onDeviationThresholdChange?.(val)}
+              className="w-full"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>5 m</span>
+              <span>100 m</span>
             </div>
+          </div>
 
-            {/* Download progress */}
-            {isDownloading && (
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Downloading...</span>
-                  <span>
-                    {downloadProgress.done} / {downloadProgress.total}
+          {/* Map Cache section */}
+          <div className="space-y-3 border-t border-border/40 pt-5">
+            <div className="flex items-center gap-2">
+              <HardDrive className="w-4 h-4 text-primary" />
+              <p className="font-semibold text-foreground text-sm">Map Cache</p>
+            </div>
+            {cacheStats ? (
+              <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
+                <div className="text-sm">
+                  <span className="font-bold text-foreground">
+                    {cacheStats.tileCount.toLocaleString()}
+                  </span>
+                  <span className="text-muted-foreground"> tiles cached</span>
+                  <span className="text-muted-foreground ml-2">
+                    (~{cacheStats.estimatedMB.toFixed(1)} MB)
                   </span>
                 </div>
-                <Progress
-                  value={
-                    downloadProgress.total > 0
-                      ? (downloadProgress.done / downloadProgress.total) * 100
-                      : 0
-                  }
-                  className="h-2 rounded-full"
-                />
+                {cacheStats.tileCount === 0 && (
+                  <CheckCircle2 className="w-4 h-4 text-muted-foreground" />
+                )}
               </div>
+            ) : (
+              <div className="h-12 bg-muted/30 rounded-xl animate-pulse" />
             )}
-
             <Button
-              data-ocid="download_area.submit_button"
-              onClick={handleDownload}
-              disabled={isDownloading || !isOnline || !downloadName.trim()}
-              className="w-full bg-primary text-primary-foreground rounded-xl h-12 font-display font-semibold gap-2"
+              data-ocid="settings.clear_cache_button"
+              variant="outline"
+              size="sm"
+              disabled={isClearingCache || cacheStats?.tileCount === 0}
+              onClick={handleClearCache}
+              className="w-full rounded-xl border-destructive/30 text-destructive hover:bg-destructive/10"
             >
-              {isDownloading ? (
+              {isClearingCache ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Downloading...
-                </>
-              ) : !isOnline ? (
-                <>
-                  <WifiOff className="w-4 h-4" />
-                  Offline — Connect to Download
-                </>
-              ) : !downloadName.trim() ? (
-                <>
-                  <Download className="w-4 h-4" />
-                  Enter a name to download
+                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" />
+                  Clearing...
                 </>
               ) : (
                 <>
-                  <Download className="w-4 h-4" />
-                  Download {estimatedTiles.toLocaleString()} Tiles
+                  <Trash2 className="w-3.5 h-3.5 mr-2" />
+                  Clear Cache
                 </>
               )}
             </Button>
-
-            {/* Downloaded Maps list */}
-            <div className="border-t border-border/40 pt-5 space-y-3">
-              <div className="flex items-center gap-2">
-                <HardDrive className="w-4 h-4 text-primary" />
-                <p className="font-semibold text-foreground text-sm">
-                  Downloaded Maps
-                </p>
-              </div>
-
-              {downloadRecords.length === 0 ? (
-                <p
-                  data-ocid="download_area.empty_state"
-                  className="text-xs text-muted-foreground text-center py-3"
-                >
-                  No maps downloaded yet
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {downloadRecords.map((record, idx) => (
-                    <div
-                      key={record.id}
-                      data-ocid={`download_area.item.${idx + 1}`}
-                      className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3 gap-3"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-sm text-foreground truncate">
-                          {record.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {formatRecordDate(record.date)} &middot;{" "}
-                          {record.tileCount.toLocaleString()} tiles (~
-                          {((record.tileCount * 15) / 1024).toFixed(1)} MB)
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        data-ocid={`download_area.delete_button.${idx + 1}`}
-                        onClick={() => handleDeleteRecord(record.id)}
-                        className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                        title="Delete this download record"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
-        </SheetContent>
-      </Sheet>
-
-      {/* Settings Sheet */}
-      <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <SheetContent
-          data-ocid="settings.sheet"
-          side="bottom"
-          className="rounded-t-2xl bg-card border-border px-6 pb-8 max-h-[85vh] overflow-y-auto"
-        >
-          <SheetHeader className="mb-6">
-            <SheetTitle className="font-display text-lg flex items-center gap-2">
-              <Settings className="w-4 h-4 text-primary" />
-              Settings
-            </SheetTitle>
-          </SheetHeader>
-
-          <div className="space-y-6">
-            {/* Deviation threshold */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-foreground text-sm">
-                    Deviation Threshold
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Warn when off route by more than this distance
-                  </p>
-                </div>
-                <span className="text-sm font-bold text-primary tabular-nums bg-primary/10 px-3 py-1 rounded-full">
-                  {deviationThreshold} m
-                </span>
-              </div>
-              <Slider
-                data-ocid="settings.deviation_threshold.input"
-                min={5}
-                max={100}
-                step={5}
-                value={[deviationThreshold]}
-                onValueChange={([val]) => onDeviationThresholdChange?.(val)}
-                className="w-full"
-              />
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>5 m</span>
-                <span>100 m</span>
-              </div>
-            </div>
-
-            {/* Map Cache section */}
-            <div className="space-y-3 border-t border-border/40 pt-5">
-              <div className="flex items-center gap-2">
-                <HardDrive className="w-4 h-4 text-primary" />
-                <p className="font-semibold text-foreground text-sm">
-                  Map Cache
-                </p>
-              </div>
-              {cacheStats ? (
-                <div className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3">
-                  <div className="text-sm">
-                    <span className="font-bold text-foreground">
-                      {cacheStats.tileCount.toLocaleString()}
-                    </span>
-                    <span className="text-muted-foreground"> tiles cached</span>
-                    <span className="text-muted-foreground ml-2">
-                      (~{cacheStats.estimatedMB.toFixed(1)} MB)
-                    </span>
-                  </div>
-                  {cacheStats.tileCount === 0 && (
-                    <CheckCircle2 className="w-4 h-4 text-muted-foreground" />
-                  )}
-                </div>
-              ) : (
-                <div className="h-12 bg-muted/30 rounded-xl animate-pulse" />
-              )}
-              <Button
-                data-ocid="settings.clear_cache_button"
-                variant="outline"
-                size="sm"
-                disabled={isClearingCache || cacheStats?.tileCount === 0}
-                onClick={handleClearCache}
-                className="w-full rounded-xl border-destructive/30 text-destructive hover:bg-destructive/10"
-              >
-                {isClearingCache ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" />
-                    Clearing...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-3.5 h-3.5 mr-2" />
-                    Clear Cache
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-        </SheetContent>
-      </Sheet>
+        </div>
+      </div>
     </div>
   );
 }

@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from "react";
 
 const TICK_ANGLES = Array.from({ length: 36 }, (_, i) => i * 10);
 
+function headingToCardinal(deg: number): string {
+  const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  return dirs[Math.round(deg / 45) % 8];
+}
+
 export function LiveCompass() {
   const [heading, setHeading] = useState<number | null>(null);
   const [available, setAvailable] = useState(true);
@@ -9,6 +14,9 @@ export function LiveCompass() {
   const listenerRef = useRef<((e: DeviceOrientationEvent) => void) | null>(
     null,
   );
+  const absoluteListenerRef = useRef<
+    ((e: DeviceOrientationEvent) => void) | null
+  >(null);
 
   useEffect(() => {
     if (!window.DeviceOrientationEvent) {
@@ -18,17 +26,35 @@ export function LiveCompass() {
 
     const handleOrientation = (e: DeviceOrientationEvent) => {
       let h: number | null = null;
+      // iOS: webkitCompassHeading is already degrees clockwise from magnetic north
       if (typeof (e as any).webkitCompassHeading === "number") {
         h = (e as any).webkitCompassHeading;
-      } else if (e.alpha !== null) {
+      } else if ((e as any).absolute === true && e.alpha !== null) {
+        // Android absolute: alpha is counter-clockwise from north in [0,360)
         h = (360 - e.alpha) % 360;
       }
-      if (h !== null) setHeading(h);
+      if (h !== null) setHeading(Math.round(h));
     };
 
-    listenerRef.current = handleOrientation;
+    const handleAbsoluteOrientation = (e: DeviceOrientationEvent) => {
+      if (e.alpha !== null) {
+        const h = (360 - e.alpha) % 360;
+        setHeading(Math.round(h));
+      }
+    };
 
-    const addListener = () => {
+    const addListeners = () => {
+      // Prefer deviceorientationabsolute for Android (gives real magnetic north)
+      if ("ondeviceorientationabsolute" in window) {
+        absoluteListenerRef.current = handleAbsoluteOrientation;
+        window.addEventListener(
+          "deviceorientationabsolute",
+          handleAbsoluteOrientation as EventListener,
+          true,
+        );
+      }
+      // Also listen to regular deviceorientation for iOS (webkitCompassHeading)
+      listenerRef.current = handleOrientation;
       window.addEventListener("deviceorientation", handleOrientation, true);
     };
 
@@ -39,7 +65,7 @@ export function LiveCompass() {
         .requestPermission()
         .then((state: string) => {
           if (state === "granted") {
-            addListener();
+            addListeners();
           } else {
             setPermissionDenied(true);
             setAvailable(false);
@@ -50,7 +76,7 @@ export function LiveCompass() {
           setAvailable(false);
         });
     } else {
-      addListener();
+      addListeners();
     }
 
     return () => {
@@ -58,6 +84,13 @@ export function LiveCompass() {
         window.removeEventListener(
           "deviceorientation",
           listenerRef.current,
+          true,
+        );
+      }
+      if (absoluteListenerRef.current) {
+        window.removeEventListener(
+          "deviceorientationabsolute",
+          absoluteListenerRef.current as EventListener,
           true,
         );
       }
@@ -75,7 +108,7 @@ export function LiveCompass() {
         permissionDenied
           ? "Compass permission denied"
           : heading !== null
-            ? `${Math.round(heading)}°`
+            ? `${heading}° ${headingToCardinal(heading)}`
             : "Compass"
       }
     >
@@ -99,7 +132,7 @@ export function LiveCompass() {
           aria-label="Compass"
           style={{
             transform: `rotate(${rotation}deg)`,
-            transition: heading !== null ? "transform 0.2s ease-out" : "none",
+            transition: heading !== null ? "transform 0.15s ease-out" : "none",
           }}
         >
           <title>Compass</title>
@@ -202,7 +235,7 @@ export function LiveCompass() {
             border: "1px solid rgba(255,255,255,0.1)",
           }}
         >
-          {Math.round(heading)}°
+          {heading}° {headingToCardinal(heading)}
         </div>
       )}
     </div>
