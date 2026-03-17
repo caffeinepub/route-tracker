@@ -111,6 +111,10 @@ export default function MapView({
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
+  const recordingStateRef = useRef<RecordingState>("idle");
+  useEffect(() => {
+    recordingStateRef.current = recordingState;
+  }, [recordingState]);
   const [waypoints, setWaypoints] = useState<Coordinate[]>([]);
   const [distanceMeters, setDistanceMeters] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -383,7 +387,7 @@ export default function MapView({
         }).addTo(map);
       }
 
-      if (recordingState === "recording") {
+      if (recordingStateRef.current === "recording") {
         setWaypoints((prev) => {
           const newPoint = { latitude, longitude };
           const updated = [...prev, newPoint];
@@ -446,7 +450,7 @@ export default function MapView({
         }
       }
     },
-    [recordingState, referenceRoute, deviationThreshold],
+    [referenceRoute, deviationThreshold],
   );
 
   const startRecording = useCallback(() => {
@@ -726,7 +730,7 @@ export default function MapView({
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="absolute top-4 left-4 right-4 z-[1000] bg-destructive/90 backdrop-blur-md px-4 py-3 rounded-xl flex items-start gap-3 border border-destructive/50"
+            className="absolute top-4 left-4 right-20 z-[1000] bg-destructive/90 backdrop-blur-md px-4 py-3 rounded-xl flex items-start gap-3 border border-destructive/50"
           >
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-destructive-foreground" />
             <p className="text-sm text-destructive-foreground">{geoError}</p>
@@ -740,7 +744,7 @@ export default function MapView({
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="absolute top-4 left-4 right-4 z-[1000] bg-card/85 backdrop-blur-lg border border-border/50 rounded-2xl px-5 py-3 shadow-glass"
+            className="absolute top-4 left-4 right-20 z-[1000] bg-card/85 backdrop-blur-lg border border-border/50 rounded-2xl px-5 py-3 shadow-glass"
           >
             <div className="grid grid-cols-3 gap-2 text-center">
               <div>
@@ -797,7 +801,7 @@ export default function MapView({
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="absolute top-4 left-4 right-4 z-[1000] bg-card/85 backdrop-blur-lg border border-border/50 rounded-2xl px-5 py-3 shadow-glass flex items-center justify-between"
+            className="absolute top-4 left-4 right-20 z-[1000] bg-card/85 backdrop-blur-lg border border-border/50 rounded-2xl px-5 py-3 shadow-glass flex items-center justify-between"
           >
             <div>
               <p className="text-xs text-muted-foreground uppercase tracking-widest font-semibold">
@@ -826,7 +830,7 @@ export default function MapView({
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="absolute top-4 left-4 right-4 z-[1000] bg-card/85 backdrop-blur-lg border border-amber-500/40 rounded-2xl px-5 py-3 shadow-glass flex items-center justify-between"
+            className="absolute top-4 left-4 right-20 z-[1000] bg-card/85 backdrop-blur-lg border border-amber-500/40 rounded-2xl px-5 py-3 shadow-glass flex items-center justify-between"
           >
             <div className="flex items-center gap-2.5">
               <span className="w-2.5 h-2.5 rounded-full bg-amber-500 flex-shrink-0 animate-pulse" />
