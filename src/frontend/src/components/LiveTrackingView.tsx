@@ -97,7 +97,7 @@ interface Props {
 }
 
 export default function LiveTrackingView({ autoJoinSessionId }: Props) {
-  const { actor: _actor } = useActor();
+  const { actor: _actor, isFetching: isActorLoading } = useActor();
   const actor = _actor as unknown as FullBackendInterface | null;
 
   const [session, setSession] = useState<LiveSession | null>(() => {
@@ -151,7 +151,15 @@ export default function LiveTrackingView({ autoJoinSessionId }: Props) {
   };
 
   const handleStartSession = async () => {
-    if (!actor || !startName.trim()) return;
+    if (!startName.trim()) return;
+    if (isActorLoading) {
+      toast.info("Connecting to backend, please try again in a moment");
+      return;
+    }
+    if (!actor) {
+      toast.error("Backend not available. Please refresh and try again.");
+      return;
+    }
     setIsLoading(true);
     try {
       const result = await actor.createSession(startName.trim());
@@ -165,15 +173,24 @@ export default function LiveTrackingView({ autoJoinSessionId }: Props) {
       setShowStartDialog(false);
       setStartName("");
       toast.success("Live session started!");
-    } catch {
-      toast.error("Failed to start session");
+    } catch (err) {
+      console.error("Failed to start session:", err);
+      toast.error("Failed to start session. Please try again.");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleJoinSession = async () => {
-    if (!actor || !joinName.trim() || !joinId.trim()) return;
+    if (!joinName.trim() || !joinId.trim()) return;
+    if (isActorLoading) {
+      toast.info("Connecting to backend, please try again in a moment");
+      return;
+    }
+    if (!actor) {
+      toast.error("Backend not available. Please refresh and try again.");
+      return;
+    }
     setIsLoading(true);
     try {
       const result = await actor.joinSession(joinId.trim(), joinName.trim());
@@ -196,8 +213,9 @@ export default function LiveTrackingView({ autoJoinSessionId }: Props) {
       url.searchParams.delete("liveSession");
       window.history.replaceState({}, "", url.toString());
       toast.success("Joined session!");
-    } catch {
-      toast.error("Failed to join session");
+    } catch (err) {
+      console.error("Failed to join session:", err);
+      toast.error("Failed to join session. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -406,9 +424,10 @@ export default function LiveTrackingView({ autoJoinSessionId }: Props) {
             onClick={() => setShowStartDialog(true)}
             className="w-full h-14 text-base font-bold rounded-2xl bg-live text-live-foreground hover:bg-live/90 shadow-lg shadow-live/25"
             size="lg"
+            disabled={isActorLoading}
           >
             <Radio className="w-5 h-5 mr-2" />
-            Start Live Session
+            {isActorLoading ? "Connecting…" : "Start Live Session"}
           </Button>
 
           <Button
@@ -416,14 +435,16 @@ export default function LiveTrackingView({ autoJoinSessionId }: Props) {
             variant="outline"
             onClick={() => setShowJoinDialog(true)}
             className="w-full h-12 rounded-2xl border-border/60 font-semibold"
+            disabled={isActorLoading}
           >
             <UserPlus className="w-4 h-4 mr-2" />
-            Join a Session
+            {isActorLoading ? "Connecting…" : "Join a Session"}
           </Button>
         </div>
 
+        {/* Start Session Dialog */}
         <Dialog open={showStartDialog} onOpenChange={setShowStartDialog}>
-          <DialogContent className="rounded-3xl max-w-sm mx-4">
+          <DialogContent className="rounded-3xl">
             <DialogHeader>
               <DialogTitle className="font-display text-xl">
                 Start Live Session
@@ -456,8 +477,9 @@ export default function LiveTrackingView({ autoJoinSessionId }: Props) {
           </DialogContent>
         </Dialog>
 
+        {/* Join Session Dialog */}
         <Dialog open={showJoinDialog} onOpenChange={setShowJoinDialog}>
-          <DialogContent className="rounded-3xl max-w-sm mx-4">
+          <DialogContent className="rounded-3xl">
             <DialogHeader>
               <DialogTitle className="font-display text-xl">
                 Join a Session
